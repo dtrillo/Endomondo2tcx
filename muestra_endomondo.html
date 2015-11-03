@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html>
+	<!-- http://blog.loleksy.pl/2015/01/07/tcx-workouts-map/ -->
+  <head>
+    <style type="text/css">
+    html, body, #map-canvas, #map-container, #right-menu 
+	{ 
+		height: 100%; 
+		margin: 0; 
+		padding: 0;
+		font-family: Verdana;
+	}
+	
+	#map-container
+	{
+		float:left;
+		width:80%;
+	}
+	
+	#right-menu{
+		float:left;
+		width:18%;
+		margin:1%;
+	}
+	
+	#tcx-drop-zone{
+		border: 2px dashed #bbb;
+		border-radius: 5px;
+		padding: 25px;
+		text-align: center;
+		font: 20pt bold ;
+		color: #bbb;
+	}
+	
+	#import-progressbar{
+		width:100%;
+		height:20px;
+		border:1px solid #bbb;
+		color:#bbb;
+		text-align:center;
+		font-family:Verdana;
+	}
+	
+	#import-progressbar-progress{
+		width:0%;
+		height:100%;
+		background-color:green;
+	}
+	
+    </style>
+    <script type="text/javascript"
+      src="https://maps.googleapis.com/maps/api/js">
+    </script>
+	<script src="http://code.jquery.com/jquery-1.11.2.min.js"></script>
+    <script type="text/javascript">
+	  google.maps.event.addDomListener(window, 'load', initApp);
+	  function initApp() {
+		var app = new App();
+		app.initialize();
+      }
+	  
+ 
+	  var App = function(){
+			var mapOptions = {
+					  center: { lat: 37.88, lng: -4.45}, //center of Poland
+					  zoom: 10
+				};
+			var bounds;
+			this.initialize = function(){
+				this.initMap();
+				this.initDragAndDrop();
+				this.initActivityColorsData();
+			};
+			
+			this.initDragAndDrop = function(){
+				var container = document.getElementById('tcx-drop-zone');
+				var that = this;
+				container.addEventListener('dragover', function(e){that.handleDragOver(e)}, false);
+				container.addEventListener('drop', function(e){that.handleFileSelect(e)}, false);
+			};
+			
+			this.handleDragOver = function(evt) {
+				evt.stopPropagation();
+				evt.preventDefault();
+				evt.dataTransfer.dropEffect = 'copy'; // Explicitly show this is a copy.
+			};
+			
+			this.updateProgress = function(percents){
+				var stringVal = String(percents) + '%';
+				document.getElementById('import-progressbar-progress').style.width= stringVal;
+			};
+		
+			this.initMap = function(){
+				this.mapData = {
+					map:null,
+					polyLines: new Array()
+				};
+				this.mapData.map = new google.maps.Map(document.getElementById('map-canvas'), mapOptions);
+			};
+			
+			this.initActivityColorsData = function(){
+				this.activityColorsData = {
+					availableColors: [
+						'#0000ff', //blue
+						'#00ff00', //green
+						'#ff0000', //red
+					],
+					takenColors:{} //activityName => color
+				}; 
+			};
+			
+			this.handleFileSelect = function(evt) {
+				evt.stopPropagation();
+				evt.preventDefault();
+				var that = this;
+ 
+				var files = evt.dataTransfer.files; // FileList object.
+ 
+				// files is a FileList of File objects, iterate
+				var filesCount = files.length;
+				var completedFiles = 0;
+				for (var i = 0; i< filesCount; i++) {
+					//read file
+					  var reader = new FileReader();
+					  // Closure to capture the file information.
+					  reader.onload = (function(file) {
+						return function(e) {
+							//set timeout to refresh ui
+							setTimeout(function() {
+								completedFiles+=1;
+								that.handleTcxFile(file.name, e.target.result);
+								var percentCompleted = ((completedFiles)/filesCount)*100;
+								that.updateProgress(percentCompleted);
+								if(completedFiles === filesCount){
+									that.onImportFinished();
+								}
+							}, 0);
+							
+						};
+					  })(files[i]);
+ 
+					  // Read file
+					  reader.readAsText(files[i]);
+				}
+			};
+ 
+		
+		this.moveToLocation = function(lat, lng){
+			that = this;
+			var center = new google.maps.LatLng(lat, lng);
+			// using global variable:
+			this.mapData.map.panTo(center);
+			// this.mapData.map.fitZoom();
+		}
+		this.handleTcxFile = function(fileName, fileContent){
+			that = this; var c = 0;
+			var $activities = $(fileContent).find('Activity');
+			$activities.each(function(){
+				var $activity = $(this);
+				var activity = $activity.attr('Sport');
+				if(activity === 'Cycling, sport'){
+					console.log(fileName);
+				}
+				var latLngs = new Array();
+				$activity.find('Position').each(function(){
+					
+					var $position = $(this);
+					var latLng = new google.maps.LatLng($position.find('LatitudeDegrees').text(), $position.find('LongitudeDegrees').text());
+					latLngs.push(latLng);
+					if (c == 0) {
+						fin = [ parseFloat($position.find('LatitudeDegrees').text()), parseFloat($position.find('LongitudeDegrees').text()) ];
+						c = 1;
+					}
+				});
+				that.drawLine(latLngs, activity);
+			});
+			if (c == 1) { that.moveToLocation( fin[0], fin[1]) }
+		};
+		
+		this.drawLine = function(latLngs, activity){
+			var polyline = new google.maps.Polyline({
+					path: latLngs,
+					geodesic: true,
+					strokeColor: this.getActivityColor(activity),
+					strokeOpacity: 1.0,
+					strokeWeight: 2,
+			
+			});
+			polyline.setMap(this.mapData.map);
+			polyline.set('tcxActivity', activity);
+			this.mapData.polyLines.push(polyline)
+		};
+		
+		this.getActivityColor = function(activity){
+			if(!this.activityColorsData.takenColors[activity]){
+				if(this.activityColorsData.availableColors.length){
+					//take available color
+					this.activityColorsData.takenColors[activity] = this.activityColorsData.availableColors.shift();					
+				}
+				else{
+					console.log('Out of colors. Assign more in availableColors');
+					this.activityColorsData.takenColors[activity] = '#4D4D4D';
+				}
+			}
+			return this.activityColorsData.takenColors[activity];
+		};
+		
+		this.onImportFinished = function(){
+			this.renderActivityFilter();
+			this.prepareFilterEvent();
+		};
+		
+		
+		this.renderActivityFilter = function(){
+			var $container = $('#activity-filter');
+			$container.html('');
+			for(var activity in this.activityColorsData.takenColors){
+				$('<input>').attr({
+					type: 'checkbox',
+					name: 'activityFilter',
+					checked: 'checked',
+					value: activity
+				}).appendTo($container);
+				$('<span />').html(activity).css({
+					color: this.activityColorsData.takenColors[activity]
+				}).appendTo($container);
+				$container.append('<br>');
+			}
+		};
+		
+		this.prepareFilterEvent = function(){
+			var that = this;
+			$('input[name="activityFilter"]').change(function(){
+				var $this = $(this);
+				var activity = $this.val();
+				var isChecked = $this.is(':checked');
+				for(var i in that.mapData.polyLines){
+					var polyline = that.mapData.polyLines[i];
+					if(polyline.get('tcxActivity') === activity){
+						if(isChecked){
+							polyline.setMap(that.mapData.map);
+						}
+						else{
+							polyline.setMap(null);
+						}
+					}
+				}
+			});
+		};
+	  };
+    </script>
+  </head>
+  <body>
+  <div id="map-container">
+	<div id="map-canvas"></div>
+  </div>
+  <div id="right-menu">
+  <div id="tcx-drop-zone">Drop TCX files here</div>
+  <br>
+  <div id="import-progressbar"><div id="import-progressbar-progress"></div></div>
+  <br>
+  <div id="activity-filter">
+  </div>
+  </div>
+  </body>
+</html>
